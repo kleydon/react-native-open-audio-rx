@@ -1,7 +1,7 @@
 {
   "name": "@quixo3/react-native-open-audio-rx",
   "title": "React Native Open Audio Rx",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React-Native module for audio processing, and recording in open, royalty-free formats",
   "keywords": [
     "react-native", "React Native", "Native", 
