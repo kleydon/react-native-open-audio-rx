@@ -14,9 +14,9 @@ const elog = console.error;
 const wlog = console.warn;
 
 const maxDuration = 3; //Seconds
-const sampleRate = 16000;
+const sampleRate = 41000;
 const numChannels = 1;
-const byteDepth = 1;
+const byteDepth = 2;
 const recordToFile = true;
 const reportVolume = true;
 const reportFrameData = true;

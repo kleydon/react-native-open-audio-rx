@@ -24,7 +24,7 @@ import java.nio.ByteOrder;
 
 public class OpenAudioRxModule extends ReactContextBaseJavaModule {
 
-    private final String LOG_TAG = "AFrame";
+    private final String LOG_TAG = "RNOpenRx";
     private final ReactApplicationContext reactContext;
     private RCTDeviceEventEmitter eventEmitter;
 
@@ -135,7 +135,7 @@ public class OpenAudioRxModule extends ReactContextBaseJavaModule {
         if (recordToFile) {
             String dirPath = getReactApplicationContext().getFilesDir().getAbsolutePath();
             tempRawPCMDataFilePath = dirPath + "/" + "temp.pcm";
-            outputWavFilePath = dirPath + "/" + "audio.wav";
+            outputWavFilePath = dirPath + "/" + "react-native-open-rx.wav";
         }
 
         isRunning = false;

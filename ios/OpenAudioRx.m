@@ -69,7 +69,7 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
     _filePath = nil;
     if (recordToFile) {
         NSString *dirPath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-        NSString *fileName =  @"aframe-recording.wav";
+        NSString *fileName =  @"react-native-open-rx-recording.wav";
         _filePath = [NSString stringWithFormat:@"%@/%@", dirPath, fileName];
     }
     
