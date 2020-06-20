@@ -98,11 +98,3 @@ target 'example' do
   end
 end
 
-target 'example-tvOS' do
-  # Pods for example-tvOS
-
-  target 'example-tvOSTests' do
-    inherit! :search_paths
-    # Pods for testing
-  end
-end
