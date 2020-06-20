@@ -1,0 +1,35 @@
+{
+  "name": "@quixo3/react-native-open-audio-rx",
+  "title": "React Native Open Audio Rx",
+  "version": "1.0.0",
+  "description": "React-Native module for audio processing, and recording in open, royalty-free formats",
+  "keywords": [
+    "react-native", "React Native", "Native", 
+    "Audio", "Record", "Recorder",
+    "Open", "Royalty-Free", 
+    "WAV", "WAVE", "PCM", "LPCM", "FLAC", "OPUS"],
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kleydon/react-native-open-audio-rx.git",
+    "baseUrl": "https://github.com/kleydon/react-native-open-audio-rx"
+  },
+  "author": {
+    "name": "Krispin Leydon",
+    "email": "krispin_npm@krispinleydon.net"
+  },
+  "license": "MIT",
+  "licenseFilename": "LICENSE",
+  "readmeFilename": "README.md",
+  "peerDependencies": {
+    "react": "^16.8.1",
+    "react-native": ">=0.60.0-rc.0 <1.0.x"
+  },
+  "devDependencies": {
+    "react": "^16.9.0",
+    "react-native": "^0.61.5"
+  }
+}
