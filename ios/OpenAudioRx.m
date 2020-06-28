@@ -46,7 +46,7 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
     bool reportFrameData = ops[reportFrameDataKey] == nil ? false : [ops[reportFrameDataKey] boolValue];
     bool reportVolume = ops[reportVolumeKey] == nil ? false : [ops[reportVolumeKey] boolValue];
     bool recordToFile = ops[recordToFileKey] == nil ? true : [ops[recordToFileKey] boolValue];
-
+    
     _rxState.format.mSampleRate        = sampleRate;
     _rxState.format.mBitsPerChannel    = byteDepth * 8;
     _rxState.format.mChannelsPerFrame  = numChannels;
@@ -85,13 +85,32 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
 }
 
 
-RCT_EXPORT_METHOD(start) {
+RCT_REMAP_METHOD(start,
+                 startWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject) {
 
     RCTLogInfo(@"start");
 
-    // most audio players set session category to "Playback", record won't work in this mode
-    // therefore set session category to "Record" before recording
-    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryRecord error:nil];
+    AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
+    BOOL result = YES;
+    NSError* error = nil;
+    OSStatus osStatusCode = 0;
+        
+    //Set to record
+    result = [avAudioSession setCategory:(AVAudioSessionCategory)AVAudioSessionCategoryRecord error:&error];
+    if (!result) {
+        RCTLogInfo(@"Error calling setCategory %ld %@", error.code, error.localizedDescription);
+        reject([@(error.code) stringValue], @"Error calling setCategory", error);
+        return;
+    }
+    
+    //Set to measurement audio
+    result = [avAudioSession setMode:(AVAudioSessionMode)AVAudioSessionModeMeasurement error:&error];
+    if (!result) {
+        RCTLogInfo(@"Error calling setMode %ld %@", error.code, error.localizedDescription);
+        reject(@"Error in start()", @"Error calling setMode", error);
+        return;
+    }
 
     _rxState.isReceiving = true;
     _rxState.currentPacket = 0;
@@ -99,42 +118,119 @@ RCT_EXPORT_METHOD(start) {
   
     if (_rxState.recordToFile) {
         CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
-        AudioFileCreateWithURL(url, kAudioFileWAVEType, &_rxState.format, kAudioFileFlags_EraseFile, &_rxState.recordingFileId);
-        CFRelease(url);
+        osStatusCode = AudioFileCreateWithURL(url,
+                                              kAudioFileWAVEType,
+                                              &_rxState.format,
+                                              kAudioFileFlags_EraseFile,
+                                              &_rxState.recordingFileId);
+        if (url) {
+            CFRelease(url);
+        }
+        
+        if (osStatusCode) {
+            NSString* errorMsg = @"Error calling AudioFileCreateWithURL";
+            error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
+                                               code:osStatusCode
+                                           userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
+            RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
+            reject([@(osStatusCode) stringValue], errorMsg, error);
+            return;
+        }
     }
       
-    AudioQueueNewInput(&_rxState.format, //inFormat
-                       HandleInputBuffer, //inCallbackProc
-                       &_rxState, //inUserData
-                       NULL, //inCallbackRunLoop
-                       NULL, //inCallbackRunLoopMode
-                       0, //inFlags
-                       &_rxState.queue); //outAQ
+    osStatusCode = AudioQueueNewInput(&_rxState.format, //inFormat
+                                      HandleInputBuffer, //inCallbackProc
+                                      &_rxState, //inUserData
+                                      NULL, //inCallbackRunLoop
+                                      NULL, //inCallbackRunLoopMode
+                                      0, //inFlags
+                                      &_rxState.queue); //outAQ
+    if (osStatusCode) {
+        NSString* errorMsg = @"Error calling AudioQueueNewInput";
+        error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
+                                           code:osStatusCode
+                                       userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
+        RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
+        reject([@(osStatusCode) stringValue], errorMsg, error);
+        return;
+    }
+    
+    
     for (int i = 0; i < kNumberBuffers; i++) {
-        AudioQueueAllocateBuffer(_rxState.queue, //inAQ
-                                 _rxState.frameBufferSize, //inBufferByteSize
-                                 &_rxState.buffers[i]); //outBuffer
-        AudioQueueEnqueueBuffer(_rxState.queue, _rxState.buffers[i], 0, NULL);
+        osStatusCode = AudioQueueAllocateBuffer(_rxState.queue, //inAQ
+                                                _rxState.frameBufferSize, //inBufferByteSize
+                                                &_rxState.buffers[i]); //outBuffer
+        if (osStatusCode) {
+            NSString* errorMsg = @"Error calling AudioQueueAllocateBuffer";
+            error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
+                                               code:osStatusCode
+                                           userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
+            RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
+            reject([@(osStatusCode) stringValue], errorMsg, error);
+            return;
+        }
+        
+        osStatusCode = AudioQueueEnqueueBuffer(_rxState.queue, _rxState.buffers[i], 0, NULL);
+        if (osStatusCode) {
+            NSString* errorMsg = @"Error calling AudioQueueEnqueueBuffer";
+            error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
+                                               code:osStatusCode
+                                           userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
+            RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
+            reject([@(osStatusCode) stringValue], errorMsg, error);
+            return;
+        }
     }
         
-    AudioQueueStart(_rxState.queue, NULL);
+    osStatusCode = AudioQueueStart(_rxState.queue, NULL);
+    if (osStatusCode) {
+        NSString* errorMsg = @"Error calling AudioQueueStart";
+        error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
+                                           code:osStatusCode
+                                       userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
+        RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
+        reject([@(osStatusCode) stringValue], errorMsg, error);
+        return;
+    }
+    
+    RCTLogInfo(@"YeS!");
+    resolve(@YES);
+    return;
 }
 
 
-RCT_EXPORT_METHOD(stop) {
+RCT_REMAP_METHOD(stop,
+                 stopWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"stop");
-    [_rxState.self handleStopDueTo: STOP_CODE_USER_REQUEST];
+    
+    OSStatus osStatusCode = [_rxState.self handleStopDueTo: STOP_CODE_USER_REQUEST];
+    if (osStatusCode) {
+        NSString* errorMsg = @"Error calling handleStopDueTo";
+        NSError* error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
+                                                    code:osStatusCode
+                                                userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
+        RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
+        reject([@(osStatusCode) stringValue], errorMsg, error);
+        return;
+    }
+    
+    resolve(@YES);
 }
 
 
-- (void) handleStopDueTo: (NSString*) stopCode {
+- (OSStatus) handleStopDueTo: (NSString*) stopCode {
+    
+    OSStatus osStatusCode1 = 0;
+    OSStatus osStatusCode2 = 0;
+    OSStatus osStatusCode3 = 0;
     
     if (_rxState.isReceiving) {
         _rxState.isReceiving = false;
-        AudioQueueStop(_rxState.queue, true);
-        AudioQueueDispose(_rxState.queue, true);
+        osStatusCode1 = AudioQueueStop(_rxState.queue, true);
+        osStatusCode2 = AudioQueueDispose(_rxState.queue, true);
         if (_rxState.recordToFile) {
-            AudioFileClose(_rxState.recordingFileId);
+            osStatusCode3 = AudioFileClose(_rxState.recordingFileId);
         }
     }
         
@@ -145,6 +241,17 @@ RCT_EXPORT_METHOD(stop) {
         RCTLogInfo(@"file path %@", _filePath);
         RCTLogInfo(@"file size %llu", fileSize);
     }
+    
+    if (osStatusCode1) {
+        return osStatusCode1;
+    }
+    if (osStatusCode2) {
+        return osStatusCode2;
+    }
+    if (osStatusCode3) {
+        return osStatusCode3;
+    }
+    return 0;
 }
 
 

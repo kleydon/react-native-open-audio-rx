@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Button, Text } from 'react-native';
 import { Buffer } from 'buffer';
+import to from 'await-to-js';
 import Permissions from 'react-native-permissions';
 import OpenAudioRx from '@quixo3/react-native-open-audio-rx';
 
@@ -115,18 +116,27 @@ function App() {
 
 
   const start = async () => {
+    let err, result;
     setFilePath(null);
     setReceiving(true);
-    setLoaded(false);    
-    OpenAudioRx.start();
+    setLoaded(false);
+    [err, result] = await to(OpenAudioRx.start());
+    if (err) {
+      wlog(err);
+    }
+    wlog(result)
   };
 
 
   const stop = async () => {
+    let err, result;
     if (!receiving) {
       return;
     }
-    OpenAudioRx.stop();
+    [err, result] = await to(OpenAudioRx.stop());
+    if (err) {
+      wlog(err);
+    }
   };
 
 
