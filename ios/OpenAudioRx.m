@@ -28,7 +28,7 @@ RCT_EXPORT_MODULE()
 RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
 
     RCTLogInfo(@"init");
-    
+        
     const NSString* sampleRateKey = @"sampleRate";
     const NSString* byteDepthKey = @"byteDepth";
     const NSString* numChannelsKey = @"numChannels";
@@ -73,15 +73,21 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
         _filePath = [NSString stringWithFormat:@"%@/%@", dirPath, fileName];
     }
     
-    printf("Sample Rate: %f\n", sampleRate);
-    printf("Byte Depth: %d\n", byteDepth);
-    printf("numChannels: %d\n", numChannels);
-    printf("maxNumSamples: %d\n", maxNumSamples);
-    printf("reportFrameData: %s\n", reportFrameData ? "true" : "false");
-    printf("reportVolume: %s\n", reportVolume ? "true" : "false");
-    printf("recordToFile: %s\n", recordToFile ? "true" : "false");
-    printf("frameBufferSize: %d\n", _rxState.frameBufferSize);
-    printf("filePath: %s\n", [_filePath cStringUsingEncoding:NSASCIIStringEncoding]);
+    Boolean result = setupAVAudioSession(sampleRate);
+    if (!result) {
+        NSLog(@"Problem while setting up AVAudioSession");
+        return;
+    }
+    
+    RCTLogInfo(@"Sample Rate: %.0f", sampleRate);
+    RCTLogInfo(@"Byte Depth: %d", byteDepth);
+    RCTLogInfo(@"numChannels: %d", numChannels);
+    RCTLogInfo(@"maxNumSamples: %d", maxNumSamples);
+    RCTLogInfo(@"reportFrameData: %@", reportFrameData ? @"true" : @"false");
+    RCTLogInfo(@"reportVolume: %@", reportVolume ? @"true" : @"false");
+    RCTLogInfo(@"recordToFile: %@", recordToFile ? @"true" : @"false");
+    RCTLogInfo(@"frameBufferSize: %d", _rxState.frameBufferSize);
+    RCTLogInfo(@"filePath: %@", _filePath);
 }
 
 
@@ -96,45 +102,19 @@ RCT_REMAP_METHOD(start,
     NSError* error = nil;
     OSStatus osStatusCode = 0;
         
-    //Set to record
-    result = [avAudioSession setCategory:(AVAudioSessionCategory)AVAudioSessionCategoryRecord error:&error];
-    if (!result) {
-        RCTLogInfo(@"Error calling setCategory %ld %@", error.code, error.localizedDescription);
-        reject([@(error.code) stringValue], @"Error calling setCategory", error);
-        return;
-    }
-    
-    //Set to measurement audio
-    result = [avAudioSession setMode:(AVAudioSessionMode)AVAudioSessionModeMeasurement error:&error];
-    if (!result) {
-        RCTLogInfo(@"Error calling setMode %ld %@", error.code, error.localizedDescription);
-        reject(@"Error in start()", @"Error calling setMode", error);
-        return;
-    }
-
     _rxState.isReceiving = true;
     _rxState.currentPacket = 0;
     _rxState.numSamplesProcessed = 0;
   
     if (_rxState.recordToFile) {
         CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
-        osStatusCode = AudioFileCreateWithURL(url,
-                                              kAudioFileWAVEType,
-                                              &_rxState.format,
-                                              kAudioFileFlags_EraseFile,
-                                              &_rxState.recordingFileId);
+        AudioFileCreateWithURL(url,
+                               kAudioFileWAVEType,
+                               &_rxState.format,
+                               kAudioFileFlags_EraseFile,
+                               &_rxState.recordingFileId);
         if (url) {
             CFRelease(url);
-        }
-        
-        if (osStatusCode) {
-            NSString* errorMsg = @"Error calling AudioFileCreateWithURL";
-            error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
-                                               code:osStatusCode
-                                           userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
-            RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
-            reject([@(osStatusCode) stringValue], errorMsg, error);
-            return;
         }
     }
       
@@ -145,55 +125,16 @@ RCT_REMAP_METHOD(start,
                                       NULL, //inCallbackRunLoopMode
                                       0, //inFlags
                                       &_rxState.queue); //outAQ
-    if (osStatusCode) {
-        NSString* errorMsg = @"Error calling AudioQueueNewInput";
-        error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
-                                           code:osStatusCode
-                                       userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
-        RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
-        reject([@(osStatusCode) stringValue], errorMsg, error);
-        return;
-    }
-    
-    
+ 
     for (int i = 0; i < kNumberBuffers; i++) {
-        osStatusCode = AudioQueueAllocateBuffer(_rxState.queue, //inAQ
-                                                _rxState.frameBufferSize, //inBufferByteSize
-                                                &_rxState.buffers[i]); //outBuffer
-        if (osStatusCode) {
-            NSString* errorMsg = @"Error calling AudioQueueAllocateBuffer";
-            error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
-                                               code:osStatusCode
-                                           userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
-            RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
-            reject([@(osStatusCode) stringValue], errorMsg, error);
-            return;
-        }
-        
-        osStatusCode = AudioQueueEnqueueBuffer(_rxState.queue, _rxState.buffers[i], 0, NULL);
-        if (osStatusCode) {
-            NSString* errorMsg = @"Error calling AudioQueueEnqueueBuffer";
-            error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
-                                               code:osStatusCode
-                                           userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
-            RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
-            reject([@(osStatusCode) stringValue], errorMsg, error);
-            return;
-        }
+        AudioQueueAllocateBuffer(_rxState.queue, //inAQ
+                                 _rxState.frameBufferSize, //inBufferByteSize
+                                 &_rxState.buffers[i]); //outBuffer
+        AudioQueueEnqueueBuffer(_rxState.queue, _rxState.buffers[i], 0, NULL);
     }
         
-    osStatusCode = AudioQueueStart(_rxState.queue, NULL);
-    if (osStatusCode) {
-        NSString* errorMsg = @"Error calling AudioQueueStart";
-        error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
-                                           code:osStatusCode
-                                       userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
-        RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
-        reject([@(osStatusCode) stringValue], errorMsg, error);
-        return;
-    }
+    AudioQueueStart(_rxState.queue, NULL);
     
-    RCTLogInfo(@"YeS!");
     resolve(@YES);
     return;
 }
@@ -204,33 +145,20 @@ RCT_REMAP_METHOD(stop,
                  rejecter:(RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"stop");
     
-    OSStatus osStatusCode = [_rxState.self handleStopDueTo: STOP_CODE_USER_REQUEST];
-    if (osStatusCode) {
-        NSString* errorMsg = @"Error calling handleStopDueTo";
-        NSError* error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain
-                                                    code:osStatusCode
-                                                userInfo:@{NSLocalizedDescriptionKey: errorMsg}];
-        RCTLogInfo(@"%@. Result code: %d", errorMsg, osStatusCode);
-        reject([@(osStatusCode) stringValue], errorMsg, error);
-        return;
-    }
+    [_rxState.self handleStopDueTo: STOP_CODE_USER_REQUEST];
     
     resolve(@YES);
 }
 
 
-- (OSStatus) handleStopDueTo: (NSString*) stopCode {
-    
-    OSStatus osStatusCode1 = 0;
-    OSStatus osStatusCode2 = 0;
-    OSStatus osStatusCode3 = 0;
+- (void) handleStopDueTo: (NSString*) stopCode {
     
     if (_rxState.isReceiving) {
         _rxState.isReceiving = false;
-        osStatusCode1 = AudioQueueStop(_rxState.queue, true);
-        osStatusCode2 = AudioQueueDispose(_rxState.queue, true);
+        AudioQueueStop(_rxState.queue, true);
+        AudioQueueDispose(_rxState.queue, true);
         if (_rxState.recordToFile) {
-            osStatusCode3 = AudioFileClose(_rxState.recordingFileId);
+            AudioFileClose(_rxState.recordingFileId);
         }
     }
         
@@ -241,18 +169,296 @@ RCT_REMAP_METHOD(stop,
         RCTLogInfo(@"file path %@", _filePath);
         RCTLogInfo(@"file size %llu", fileSize);
     }
-    
-    if (osStatusCode1) {
-        return osStatusCode1;
-    }
-    if (osStatusCode2) {
-        return osStatusCode2;
-    }
-    if (osStatusCode3) {
-        return osStatusCode3;
-    }
-    return 0;
 }
+
+
+
+bool setupAVAudioSession(double desiredSampleRate) {
+
+    AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
+    BOOL result = YES;
+    NSError* error = nil;
+    
+    //Set up audio session
+    //++++++++++++
+    //Deactivate session to request preferences
+    if (!deactivateAudioSession()) {
+        RCTLogInfo(@"Error deactivating session during setup.");
+        return false;
+    }
+    
+    //Set category
+    //NOTE: AVAudioSessionCategoryRecord...
+    // * Silences playback audio
+    // * Had issues when I was testing on iPhone5  iOS 7 and 9
+    error = nil;
+    result = [avAudioSession setCategory: AVAudioSessionCategoryPlayAndRecord error: &error];
+    if (!result) {
+        RCTLogInfo(@"Error while setting category: %ld, %@", (long)error.code, error.localizedDescription);
+        return false;
+    }
+    
+    //Set mode
+    //NOTE: AVAudioSessionModeMeasurement...
+    // * Supposedly results in use of primary built-in mic.
+    // * May affect audio output on iPad 4 (and other devices)?
+    error = nil;
+    result = [avAudioSession setMode: AVAudioSessionModeMeasurement error: &error];
+    if (!result) {
+        RCTLogInfo(@"Error while setting mode: %ld, %@", (long)error.code, error.localizedDescription);
+        return false;
+    }
+    
+    ***** PREFERRED BUFFER DURATION AND SAMPLE RATE... ****
+    
+    //setPreferredIOBufferDuration
+    NSTimeInterval preferredInputIOBufferDuration = 0.005f; //5ms
+    error = nil;
+    result = [avAudioSession setPreferredIOBufferDuration: preferredInputIOBufferDuration error: &error];
+    if (!result) {
+        RCTLogInfo(@"Error while setting buffer duration: %ld, %@", (long)error.code, error.localizedDescription);
+        return false;
+    }
+    
+    //setPreferredSampleRate - HW sample rate; impacts - but is not same as - SW sample rate
+    RCTLogInfo(@"Requested hardware sample rate: %.0f", desiredSampleRate);
+    double preferredInputHWSampleRate = desiredSampleRate;
+    error = nil;
+    result = [avAudioSession setPreferredSampleRate:preferredInputHWSampleRate error:&error];
+    if (!result) {
+        RCTLogInfo(@"Error while setting sample rate: %ld, %@", (long)error.code, error.localizedDescription);
+        return false;
+    }
+    RCTLogInfo(@"Received hardware sample rate: %.0f", avAudioSession.sampleRate);
+    
+    //setPreferredInput and Data Source
+    //++++
+    NSArray *availableInputs = [avAudioSession availableInputs];
+    AVAudioSessionPortDescription* builtInMicPort = nil;
+    for (AVAudioSessionPortDescription* port in availableInputs) {
+        if ([port.portType isEqualToString:AVAudioSessionPortBuiltInMic]) {
+            builtInMicPort = port;
+            break;
+        }
+    }
+    // Print out a description of the data sources for the built-in microphone
+    //RCTLogInfo(@"There are %u data sources for port :'%@'", (unsigned)[builtInMicPort.dataSources count], builtInMicPort.portName);
+    //RCTLogInfo(@"%@", builtInMicPort.dataSources);
+    
+    // loop over the built-in mic's data sources and attempt to locate the front microphone
+    AVAudioSessionDataSourceDescription* frontInputDataSource = nil;
+    for (AVAudioSessionDataSourceDescription* source in builtInMicPort.dataSources) {
+        if ([source.orientation isEqual:AVAudioSessionOrientationFront]) {
+            frontInputDataSource = source;
+            break;
+        }
+    }
+    if (frontInputDataSource) {
+        
+        /*
+        RCTLogInfo(@"Currently selected audio source is '%@' for port '%@'",
+                   builtInMicPort.selectedDataSource.dataSourceName,
+                   builtInMicPort.portName);
+        
+        RCTLogInfo(@"Attempting to select audio source '%@' on port '%@'",
+                   frontInputDataSource.dataSourceName,
+                   builtInMicPort.portName);
+        */
+        
+        // Set a preference for the front data source.
+        error = nil;
+        result = [builtInMicPort setPreferredDataSource: frontInputDataSource error: &error];
+        if (!result) {
+            RCTLogInfo(@"setPreferredDataSource input failed: %ld, %@",
+                       (long) error.code,
+                       error.localizedDescription);
+            return false;
+        }
+    }
+    
+    // Set the built-in mic to be the selected for input.
+    error = nil;
+    result = [avAudioSession setPreferredInput: builtInMicPort error: &error];
+    if (!result) {
+        RCTLogInfo(@"setPreferred input failed: %ld, %@",
+                   (long) error.code,
+                   error.localizedDescription);
+        return false;
+    }
+    //----
+    //------------
+    
+    
+    //Set up notification handlers
+    //++++++++++++
+    //See: http://stackoverflow.com/questions/20736809/avplayer-handle-when-incoming-call-come
+    //For any interruption which would be called because of an incoming call, alarm clock, etc.
+    
+    NSNotificationCenter* notificationCenter = [NSNotificationCenter defaultCenter];
+    /*
+    //Interruption
+    [notificationCenter removeObserver: audioControllerObjCpp
+                                  name: AVAudioSessionInterruptionNotification
+                                object: nil];
+
+    [notificationCenter addObserver: audioControllerObjCpp
+                           selector: @selector(handleAudioSessionInterruption:)
+                               name: AVAudioSessionInterruptionNotification
+                             object: avAudioSession];
+    
+    //Route change
+    [notificationCenter removeObserver: audioControllerObjCpp
+                                  name: AVAudioSessionRouteChangeNotification
+                                object: nil];
+    
+    [notificationCenter addObserver: audioControllerObjCpp
+                           selector: @selector(handleRouteChange:)
+                               name: AVAudioSessionRouteChangeNotification
+                             object: avAudioSession];
+    
+    //Media services reset
+    [notificationCenter removeObserver: audioControllerObjCpp
+                                  name: AVAudioSessionMediaServicesWereResetNotification
+                                object: nil];
+    
+    [notificationCenter addObserver: audioControllerObjCpp
+                           selector: @selector(handleMediaServicesReset)
+                               name: AVAudioSessionMediaServicesWereResetNotification
+                             object: avAudioSession];
+    */
+     //------------
+    
+    
+    //Activate session (to verify that settings have taken effect)
+    //NOTES: Activate AFTER requesting preferences, and BEFORE determining if preferences were granted
+    if (!activateAudioSession()) {
+        RCTLogInfo(@"Unable to activate audio session to test requested settings");
+        return false;
+    }
+    
+    
+    //Verify audio session's configuration (session must be active)
+    //++++++++++++
+    //Determine whether preferences were granted or not
+    //Sample Rate
+    double grantedInputSampleRate = avAudioSession.sampleRate;
+    if (grantedInputSampleRate != preferredInputHWSampleRate) {
+        RCTLogInfo(@"Preferred input sample rate %.0f not granted. Sample rate: %.0f",
+                   preferredInputHWSampleRate,
+                   grantedInputSampleRate);
+    }
+    
+    //Buffer Duration
+    NSTimeInterval grantedInputIOBufferDuration = avAudioSession.IOBufferDuration;
+    if (grantedInputIOBufferDuration != preferredInputIOBufferDuration) {
+        RCTLogInfo(@"Preferred buffer duration %.4f not granted. Actual buffer duration: %.4f",
+                   preferredInputIOBufferDuration,
+                   grantedInputIOBufferDuration);
+    }
+    
+    //Buffer Size
+    uint32_t grantedInputIOBufferLength =
+        round(grantedInputIOBufferDuration * grantedInputSampleRate);
+    RCTLogInfo(@"Granted buffer length: %d", grantedInputIOBufferLength);
+    
+    
+    //Input Data Source
+    AVAudioSessionDataSourceDescription* inputDataSource = avAudioSession.inputDataSource;
+    if (frontInputDataSource && inputDataSource) { //Both would be nil if switching between inputs is not possible on a given device
+        if (![inputDataSource.dataSourceID isEqualToNumber: frontInputDataSource.dataSourceID]) {
+            
+            RCTLogInfo(@"Preferred audio data source: ('%@', %@) not granted",
+                       frontInputDataSource.dataSourceName,
+                       [frontInputDataSource.dataSourceID stringValue]);
+
+            RCTLogInfo(@"Currently selected source is: '%@', %@.",
+                       inputDataSource.dataSourceName,
+                       [inputDataSource.dataSourceID stringValue]);
+        }
+    }
+    //Loop over built-in mic's data sources and attempt to locate the input data source
+    bool inputDataSourceIsBuiltIn = false;
+    for (AVAudioSessionDataSourceDescription* source in builtInMicPort.dataSources) {
+        if ([source.dataSourceID isEqualToNumber: inputDataSource.dataSourceID]) {
+            inputDataSourceIsBuiltIn = true;
+            break;
+        }
+    }
+    if (!inputDataSourceIsBuiltIn) {
+        RCTLogInfo(@"Currently selected source is NOT a built-in source.");
+    }
+    //------------
+    
+    
+    //Set microphone gain (while session is active), if possible
+    //++++++++++++
+    float gain = [avAudioSession inputGain];
+    RCTLogInfo(@"Initial microphone gain: %.2f", gain);
+    
+    if ([avAudioSession isInputGainSettable]) {
+        result = [avAudioSession setInputGain: 1.0f error: &error]; //Highest value is 1.0
+        if (!result) {
+            RCTLogInfo(@"Error while setting microphone input gain.");
+            return false;
+        }
+    }
+    else {
+        RCTLogInfo(@"Microphone input gain for this device is not settable.");
+    }
+    
+    gain = [avAudioSession inputGain];
+    RCTLogInfo(@"Microphone gain after configuration: %.2f", gain);
+    //-----------
+    
+    /*
+    //Deactivate session (now that we know whether or not settings have taken effect)
+    if (!deactivateAudioSession()) {
+        RCTLogInfo(@"Unable to deactivate audio session after checking requestes settings");
+        return false;
+    }
+    
+    //Activate the audio session
+     if (!activateAudioSession()) {
+        RCTLogInfo(@"Unable to activate audio session after checking requested settings");
+        return false;
+     }
+     */
+    
+    return true;
+}
+
+
+
+bool activateAudioSession() {
+    AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
+    bool result = YES;
+    NSError* error = nil;
+    result = [avAudioSession setActive: YES error: &error];
+    if (!result) {
+        RCTLogInfo(@"Error activating avAudioSession: %ld, %@",
+                   (long)error.code,
+                   error.localizedDescription);
+    }
+    
+    return result;
+}
+
+
+
+static bool deactivateAudioSession() {
+    AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
+    bool result = YES;
+    NSError* error = nil;
+    result = [avAudioSession setActive: NO error: &error];
+    if (!result) {
+        RCTLogInfo(@"Error deactivating avAudioSession: %ld, %@",
+                   (long)error.code,
+                   error.localizedDescription);
+    }
+    
+    return result;
+}
+
 
 
 void HandleInputBuffer(void *inUserData,
