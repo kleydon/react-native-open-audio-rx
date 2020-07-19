@@ -51,8 +51,13 @@ function App() {
       ilog('App() mounted.');
 
       await checkPermission(); // <--- Need to have useEffect hold and call an async function
-      
-      OpenAudioRx.init(options);
+
+      const [_, result] = await to(OpenAudioRx.init(options));
+      if (result == false) {
+        alert("Error: stopped receiving audio unexpectedly.");
+        ilog('Error initializeing...');
+        // ****** HANDLE ******
+      }
   
       OpenAudioRx.subscribe('frameDataEvent', (frameDataB64) => {
         const frameData = Buffer.from(frameDataB64, 'base64');
@@ -116,26 +121,26 @@ function App() {
 
 
   const start = async () => {
-    let err, result;
+
     setFilePath(null);
     setReceiving(true);
     setLoaded(false);
-    [err, result] = await to(OpenAudioRx.start());
-    if (err) {
+    
+    const [_, result] = await to(OpenAudioRx.start());
+    if (result == false) {
       wlog(err);
     }
-    wlog(result)
   };
 
 
   const stop = async () => {
-    let err, result;
     if (!receiving) {
       return;
     }
-    [err, result] = await to(OpenAudioRx.stop());
-    if (err) {
-      wlog(err);
+
+    const [_, result] = await to(OpenAudioRx.stop());
+    if (result == false) {
+      wlog(err)
     }
   };
 

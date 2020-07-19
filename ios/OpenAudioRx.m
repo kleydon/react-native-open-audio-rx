@@ -22,13 +22,34 @@ static double MAX_VOLUME = 0.0; //dbFS
 static double MIN_VOLUME = -100.0; //dbFS
 
 
+/*
+  
+ Mostly, want:
+ 
+ RESULT_OK = 0
+ RESULT_ERR_INIT
+ RESULT_ERR_INIT_SAMPLE_RATE - Can detect based on received value... Is this good enough?
+ RESULT_ERR_INIT_BYTE_DEPTH ?
+ RESULT_ERR_INIT_NUM_CHANNELS 1 or 2
+ RESULT_ERR_INIT_MAX_DURATION Can do something reasonable. Only positive, etc...
+ RESULT_ERR_START
+ RESULT_ERR_STOP
+ 
+ ....
+  
+ */
+
+
 RCT_EXPORT_MODULE()
 
 
-RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
+RCT_REMAP_METHOD(init,
+                 ops:(NSDictionary *)ops
+                 initWithResolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject) {
 
-    RCTLogInfo(@"init");
-        
+    RCTLogInfo(@"init()");
+
     const NSString* sampleRateKey = @"sampleRate";
     const NSString* byteDepthKey = @"byteDepth";
     const NSString* numChannelsKey = @"numChannels";
@@ -73,9 +94,10 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
         _filePath = [NSString stringWithFormat:@"%@/%@", dirPath, fileName];
     }
     
-    Boolean result = setupAVAudioSession(sampleRate);
+    bool result = setupAVAudioSession(sampleRate);
     if (!result) {
-        NSLog(@"Problem while setting up AVAudioSession");
+        RCTLogInfo(@"Problem while setting up AVAudioSession");
+        resolve(@NO);
         return;
     }
     
@@ -88,6 +110,9 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) ops) { //Options
     RCTLogInfo(@"recordToFile: %@", recordToFile ? @"true" : @"false");
     RCTLogInfo(@"frameBufferSize: %d", _rxState.frameBufferSize);
     RCTLogInfo(@"filePath: %@", _filePath);
+    
+    resolve(@YES);
+    return;
 }
 
 
@@ -95,45 +120,72 @@ RCT_REMAP_METHOD(start,
                  startWithResolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject) {
 
-    RCTLogInfo(@"start");
+    RCTLogInfo(@"start()");
 
-    AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
-    BOOL result = YES;
-    NSError* error = nil;
-    OSStatus osStatusCode = 0;
+    OSStatus osStatus = noErr;
         
     _rxState.isReceiving = true;
     _rxState.currentPacket = 0;
     _rxState.numSamplesProcessed = 0;
   
     if (_rxState.recordToFile) {
+        
         CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
-        AudioFileCreateWithURL(url,
-                               kAudioFileWAVEType,
-                               &_rxState.format,
-                               kAudioFileFlags_EraseFile,
-                               &_rxState.recordingFileId);
+        
+        osStatus = AudioFileCreateWithURL(url,
+                                          kAudioFileWAVEType,
+                                          &_rxState.format,
+                                          kAudioFileFlags_EraseFile,
+                                          &_rxState.recordingFileId);
+        if (osStatus) {
+            RCTLogInfo(@"Error: Problem creating audio file.");
+            resolve(@NO);
+            return;
+        }
+        
         if (url) {
             CFRelease(url);
         }
     }
       
-    osStatusCode = AudioQueueNewInput(&_rxState.format, //inFormat
-                                      HandleInputBuffer, //inCallbackProc
-                                      &_rxState, //inUserData
-                                      NULL, //inCallbackRunLoop
-                                      NULL, //inCallbackRunLoopMode
-                                      0, //inFlags
-                                      &_rxState.queue); //outAQ
- 
+    osStatus = AudioQueueNewInput(&_rxState.format, //inFormat
+                                  HandleInputBuffer, //inCallbackProc
+                                  &_rxState, //inUserData
+                                  NULL, //inCallbackRunLoop
+                                  NULL, //inCallbackRunLoopMode
+                                  0, //inFlags
+                                  &_rxState.queue); //outAQ
+    if (osStatus) {
+        RCTLogInfo(@"Error: Problem creating audio queue.");
+        resolve(@NO);
+        return;
+    }
+    
     for (int i = 0; i < kNumberBuffers; i++) {
-        AudioQueueAllocateBuffer(_rxState.queue, //inAQ
-                                 _rxState.frameBufferSize, //inBufferByteSize
-                                 &_rxState.buffers[i]); //outBuffer
-        AudioQueueEnqueueBuffer(_rxState.queue, _rxState.buffers[i], 0, NULL);
+        
+        osStatus = AudioQueueAllocateBuffer(_rxState.queue, //inAQ
+                                            _rxState.frameBufferSize, //inBufferByteSize
+                                            &_rxState.buffers[i]); //outBuffer
+        if (osStatus) {
+            RCTLogInfo(@"Error: Problem allocating audio queue buffer.");
+            resolve(@NO);
+            return;
+        }
+        
+        osStatus = AudioQueueEnqueueBuffer(_rxState.queue, _rxState.buffers[i], 0, NULL);
+        if (osStatus) {
+            RCTLogInfo(@"Error: Problem enqueueing buffer.");
+            resolve(@NO);
+            return;
+        }
     }
         
-    AudioQueueStart(_rxState.queue, NULL);
+    osStatus = AudioQueueStart(_rxState.queue, NULL);
+    if (osStatus) {
+        RCTLogInfo(@"Error: Problem starting audio queue.");
+        resolve(@NO);
+        return;
+    }
     
     resolve(@YES);
     return;
@@ -143,25 +195,53 @@ RCT_REMAP_METHOD(start,
 RCT_REMAP_METHOD(stop,
                  stopWithResolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject) {
-    RCTLogInfo(@"stop");
     
-    [_rxState.self handleStopDueTo: STOP_CODE_USER_REQUEST];
+    RCTLogInfo(@"stop()");
     
+    OSStatus osStatus = noErr;
+    
+    osStatus = [_rxState.self handleStopDueTo: STOP_CODE_USER_REQUEST];
+    if (osStatus) {
+        RCTLogInfo(@"Error: Problem handling user stop request.");
+        resolve(@NO);
+        return;
+    }
+        
     resolve(@YES);
+    return;
 }
 
 
-- (void) handleStopDueTo: (NSString*) stopCode {
+- (OSStatus) handleStopDueTo: (NSString*) stopCode {
+    
+    RCTLogInfo(@"handleStopDueTo()");
+    
+    OSStatus osStatus = noErr;
     
     if (_rxState.isReceiving) {
         _rxState.isReceiving = false;
-        AudioQueueStop(_rxState.queue, true);
-        AudioQueueDispose(_rxState.queue, true);
+        
+        osStatus = AudioQueueStop(_rxState.queue, true);
+        if (osStatus) {
+            RCTLogInfo(@"Error: Problem stopping audio queue.");
+            return osStatus;
+        }
+        
+        osStatus = AudioQueueDispose(_rxState.queue, true);
+        if (osStatus) {
+            RCTLogInfo(@"Error: Problem disposing of audio queue.");
+            return osStatus;
+        }
+        
         if (_rxState.recordToFile) {
-            AudioFileClose(_rxState.recordingFileId);
+            osStatus = AudioFileClose(_rxState.recordingFileId);
+            if (osStatus) {
+                RCTLogInfo(@"Error: Problem closing audio file.");
+                return osStatus;
+            }
         }
     }
-        
+    
     [_rxState.self sendEventWithName:stopEvent body:@{@"code":stopCode, @"filePath":_filePath ? _filePath : FILE_PATH_NA}];
     
     if (_rxState.recordToFile) {
@@ -169,14 +249,17 @@ RCT_REMAP_METHOD(stop,
         RCTLogInfo(@"file path %@", _filePath);
         RCTLogInfo(@"file size %llu", fileSize);
     }
+    
+    return noErr;
 }
 
 
+static bool setupAVAudioSession(double desiredSampleRate) {
 
-bool setupAVAudioSession(double desiredSampleRate) {
-
+    RCTLogInfo(@"setupAVAudioSession()");
+    
     AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
-    BOOL result = YES;
+    bool result = true;
     NSError* error = nil;
     
     //Set up audio session
@@ -208,8 +291,8 @@ bool setupAVAudioSession(double desiredSampleRate) {
         RCTLogInfo(@"Error while setting mode: %ld, %@", (long)error.code, error.localizedDescription);
         return false;
     }
-    
-    ***** PREFERRED BUFFER DURATION AND SAMPLE RATE... ****
+    	
+	//***** PREFERRED BUFFER DURATION AND SAMPLE RATE... ****
     
     //setPreferredIOBufferDuration
     NSTimeInterval preferredInputIOBufferDuration = 0.005f; //5ms
@@ -241,6 +324,11 @@ bool setupAVAudioSession(double desiredSampleRate) {
             break;
         }
     }
+    if (!builtInMicPort) {
+        RCTLogInfo(@"Device has no built-in mic port.");
+        return false;
+    }
+    
     // Print out a description of the data sources for the built-in microphone
     //RCTLogInfo(@"There are %u data sources for port :'%@'", (unsigned)[builtInMicPort.dataSources count], builtInMicPort.portName);
     //RCTLogInfo(@"%@", builtInMicPort.dataSources);
@@ -431,9 +519,8 @@ bool setupAVAudioSession(double desiredSampleRate) {
 
 bool activateAudioSession() {
     AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
-    bool result = YES;
     NSError* error = nil;
-    result = [avAudioSession setActive: YES error: &error];
+    bool result = [avAudioSession setActive: YES error: &error];
     if (!result) {
         RCTLogInfo(@"Error activating avAudioSession: %ld, %@",
                    (long)error.code,
@@ -447,9 +534,8 @@ bool activateAudioSession() {
 
 static bool deactivateAudioSession() {
     AVAudioSession* avAudioSession = [AVAudioSession sharedInstance];
-    bool result = YES;
     NSError* error = nil;
-    result = [avAudioSession setActive: NO error: &error];
+    bool result = [avAudioSession setActive: NO error: &error];
     if (!result) {
         RCTLogInfo(@"Error deactivating avAudioSession: %ld, %@",
                    (long)error.code,
@@ -468,6 +554,8 @@ void HandleInputBuffer(void *inUserData,
                        UInt32 inNumPackets,
                        const AudioStreamPacketDescription *inPacketDesc) {
     
+    OSStatus osStatus = noErr;
+    
     AQRecordState* rs = (AQRecordState *)inUserData;
     bool isFinalBuffer = false;
   
@@ -483,18 +571,19 @@ void HandleInputBuffer(void *inUserData,
     }
     
     if (rs->recordToFile) {
-        int result = AudioFileWritePackets(rs->recordingFileId,
-                                           false,
-                                           numFrameSamplesToProcess * rs->format.mBytesPerPacket,
-                                           inPacketDesc,
-                                           rs->currentPacket,
-                                           &inNumPackets,
-                                           inBuffer->mAudioData);
-        if (result == noErr) {
-            rs->currentPacket += inNumPackets;
+        osStatus = AudioFileWritePackets(rs->recordingFileId,
+                                         false,
+                                         numFrameSamplesToProcess * rs->format.mBytesPerPacket,
+                                         inPacketDesc,
+                                         rs->currentPacket,
+                                         &inNumPackets,
+                                         inBuffer->mAudioData);
+        if (osStatus) {
+            [rs->self handleStopDueTo: STOP_CODE_ERROR];
+            // *** RETURN HERE?
         }
         else {
-            [rs->self handleStopDueTo: STOP_CODE_ERROR];
+            rs->currentPacket += inNumPackets;
         }
     }
 
@@ -512,12 +601,18 @@ void HandleInputBuffer(void *inUserData,
         [rs->self sendEventWithName:volumeEvent body:@(volume)];
     }
   
-    AudioQueueEnqueueBuffer(rs->queue, inBuffer, 0, NULL);
+    osStatus = AudioQueueEnqueueBuffer(rs->queue, inBuffer, 0, NULL);
+    if (osStatus) {
+        RCTLogInfo(@"Error: Problem enqueueing buffer");
+    }
     
     rs->numSamplesProcessed += numFrameSamplesToProcess;
     
     if (isFinalBuffer) {
-        [rs->self handleStopDueTo:STOP_CODE_MAX_NUM_SAMPLES_REACHED];
+        osStatus = [rs->self handleStopDueTo: STOP_CODE_MAX_NUM_SAMPLES_REACHED];
+        if (osStatus) {
+            RCTLogInfo(@"Error: Problem handling stop due to max num samples reached");
+        }
     }
 }
 
@@ -529,9 +624,13 @@ void HandleInputBuffer(void *inUserData,
 }
 
 
-- (void)dealloc {
-    RCTLogInfo(@"dealloc");
-    AudioQueueDispose(_rxState.queue, true);
+- (void) dealloc {
+    RCTLogInfo(@"dealloc()");
+        
+    OSStatus osStatus = AudioQueueDispose(_rxState.queue, true);
+    if (osStatus) {
+        RCTLogInfo(@"Error: Problem disposing of audio queue");
+    }
 }
 
 
