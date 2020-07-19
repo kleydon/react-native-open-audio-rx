@@ -8,6 +8,7 @@ import android.util.Base64;
 import android.util.Log;
 
 import com.facebook.react.bridge.Arguments;
+import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -75,7 +76,7 @@ public class OpenAudioRxModule extends ReactContextBaseJavaModule {
 
 
     @ReactMethod
-    public void init(ReadableMap options) {
+    public void init(ReadableMap options, Promise promise) {
 
         final String sampleRateKey = "sampleRate";
         final String numChannelsKey = "numChannels";
@@ -162,11 +163,14 @@ public class OpenAudioRxModule extends ReactContextBaseJavaModule {
         Log.d(LOG_TAG, "audioSource: "+ audioSource);
         Log.d(LOG_TAG, "frameBufferSize: "+ frameBufferSize);
         Log.d(LOG_TAG, "filePath: "+ outputWavFilePath);
+
+        promise.resolve(true);
+        return;
     }
 
 
     @ReactMethod
-    public void start() {
+    public void start(Promise promise) {
 
         isRunning = true;
         stopCode = STOP_CODE_USER_REQUEST; //Assume the best
@@ -253,11 +257,14 @@ public class OpenAudioRxModule extends ReactContextBaseJavaModule {
         });
 
         rxThread.start();
+
+        promise.resolve(true);
+        return;
     }
 
 
     @ReactMethod
-    public void stop() {
+    public void stop(Promise promise) {
 
         Log.d(LOG_TAG, "stop().");
 
@@ -265,6 +272,9 @@ public class OpenAudioRxModule extends ReactContextBaseJavaModule {
         isRunning = false;
 
         //Note: emitStopEvent() gets called via recordThread
+
+        promise.resolve(true);
+        return;
     }
 
 
